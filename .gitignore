@@ -1,0 +1,9 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.kubeconfig
+.env
+.DS_Store
+.vscode/
+.idea/
