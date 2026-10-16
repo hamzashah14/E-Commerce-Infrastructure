@@ -105,6 +105,11 @@ resource "aws_eks_node_group" "node_group" {
     max_unavailable = 1
   }
 
+  # Cluster Autoscaler changes the desired size at runtime; do not reset it on apply.
+  lifecycle {
+    ignore_changes = [scaling_config[0].desired_size]
+  }
+
   # Cluster Autoscaler discovers the ASG behind this node group through these tags.
   tags = {
     Terraform                                       = "true"
