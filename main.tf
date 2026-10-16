@@ -66,3 +66,18 @@ module "argocd" {
   depends_on = [module.eks]
 }
 
+
+module "autoscaler" {
+  source = "./modules/autoscaler"
+
+  providers = {
+    helm = helm.eks
+  }
+
+  cluster_name      = module.eks.cluster_name
+  region            = var.region
+  oidc_provider_arn = module.eks.oidc_provider_arn
+  oidc_issuer       = module.eks.oidc_issuer
+
+  depends_on = [module.eks]
+}

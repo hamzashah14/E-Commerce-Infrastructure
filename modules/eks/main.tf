@@ -105,8 +105,11 @@ resource "aws_eks_node_group" "node_group" {
     max_unavailable = 1
   }
 
+  # Cluster Autoscaler discovers the ASG behind this node group through these tags.
   tags = {
-    Terraform = "true"
+    Terraform                                       = "true"
+    "k8s.io/cluster-autoscaler/enabled"             = "true"
+    "k8s.io/cluster-autoscaler/${var.cluster_name}" = "owned"
   }
 
 
