@@ -9,13 +9,15 @@ Terraform for the AWS platform that runs the [E-Commerce-Microservices](https://
 | VPC `EKS-Demo-VPC` | `10.1.0.0/16`, DNS support and hostnames enabled, one internet gateway |
 | Subnets | 3 public subnets (`10.1.1.0/24`, `10.1.2.0/24`, `10.1.3.0/24`) in `us-east-1a`, `us-east-1b`, `us-east-1c`, one shared public route table; tagged for EKS and load balancers |
 | EKS cluster `eks-cluster` | Kubernetes `1.34`, public API endpoint, IAM role with `AmazonEKSClusterPolicy`, OIDC provider |
-| Managed node group `eks-node-group` | `m7i-flex.large`, ON_DEMAND, 1 desired / 1 min / 2 max, 30 GiB disks; node role with `AmazonEKSWorkerNodePolicy`, `AmazonEKS_CNI_Policy`, `AmazonEC2ContainerRegistryReadOnly` |
+| Managed node group `eks-node-group` | `m7i-flex.large`, ON_DEMAND, 2 desired / 2 min / 6 max, 30 GiB disks, tagged for Cluster Autoscaler discovery; node role with `AmazonEKSWorkerNodePolicy`, `AmazonEKS_CNI_Policy`, `AmazonEC2ContainerRegistryReadOnly` |
 | EBS CSI driver | EKS add-on `aws-ebs-csi-driver` with an IAM role for service accounts (IRSA, `AmazonEBSCSIDriverPolicy`), so PersistentVolumeClaims can attach EBS volumes |
 | ECR repositories | 7: `frontend`, `gateway`, `auth`, `order-service`, `orders`, `product-service`, `user-service`. Scan on push, mutable tags, `force_delete` enabled |
+| metrics-server | EKS add-on `metrics-server`, so HorizontalPodAutoscalers can read CPU and memory metrics |
+| Cluster Autoscaler | Helm chart `cluster-autoscaler` 9.53.0 (autoscaler 1.34.2) in `kube-system`, with an IRSA role limited to Auto Scaling groups tagged `k8s.io/cluster-autoscaler/eks-cluster = owned`; scales the node group between its min and max |
 | Argo CD | Helm chart `argo-cd` 6.7.0 in namespace `argocd`; Service type `ClusterIP`, `server.insecure = true` (plain HTTP behind a port-forward) |
 | Prometheus and Grafana | Helm chart `kube-prometheus-stack` 56.21.0 in namespace `monitoring`; Grafana, Prometheus and Alertmanager Services are `ClusterIP` |
 
-The Helm releases are defined in `modules/argocd`, which owns both the `argocd` and `monitoring` namespaces and releases.
+The Argo CD and monitoring Helm releases are defined in `modules/argocd`, which owns both the `argocd` and `monitoring` namespaces. The Cluster Autoscaler release and its IAM role are in `modules/autoscaler`.
 
 ## Architecture
 
@@ -45,7 +47,8 @@ The Helm releases are defined in `modules/argocd`, which owns both the `argocd` 
 ├── .terraform.lock.hcl   pinned provider versions
 ├── modules/
 │   ├── vpc/              VPC, subnets, internet gateway, route table
-│   ├── eks/              cluster, node group, OIDC, EBS CSI add-on and IRSA role
+│   ├── eks/              cluster, node group, OIDC, EBS CSI and metrics-server add-ons, IRSA role
+│   ├── autoscaler/       Cluster Autoscaler: IRSA role, policy and Helm release
 │   ├── ecr/              one repository per name in var.repositories
 │   └── argocd/           Argo CD and kube-prometheus-stack Helm releases
 └── docs/ISSUES.md        problems met and how they were fixed
@@ -100,7 +103,7 @@ Set in `terraform.tfvars`:
 | `node_group_name` | string | `eks-node-group` | managed node group name |
 | `instance_types` | list(string) | `["m7i-flex.large"]` | worker instance types |
 | `capacity_type` | string | `ON_DEMAND` | `ON_DEMAND` or `SPOT` |
-| `desired_size`, `min_size`, `max_size` | number | 1, 1, 2 | node group scaling |
+| `desired_size`, `min_size`, `max_size` | number | 2, 2, 6 | node group scaling; `desired_size` is only the starting value, Cluster Autoscaler changes it afterwards and Terraform ignores that drift |
 | `disk_size` | number | `30` | node disk size in GiB |
 | `repositories` | list(string) | 7 names | ECR repositories to create |
 
@@ -120,7 +123,7 @@ Set in `terraform.tfvars`:
 
 ## Cost and cleanup
 
-The EKS control plane, the EC2 node and the EBS volumes are billed while they exist. Destroy the stack when you are done.
+The EKS control plane, the EC2 nodes (two at minimum, up to six under load) and the EBS volumes are billed while they exist. Destroy the stack when you are done.
 
 Delete the workloads first, so the EBS volume behind the database claim and any load balancers are released before Terraform removes the cluster:
 
@@ -136,7 +139,7 @@ ECR repositories are created with `force_delete = true`, so their images are del
 - Public subnets only: nodes get public IPs, and there are no private subnets or NAT gateway.
 - The EKS API endpoint is public; private access is disabled.
 - State is local (no `backend` block). Add an S3 backend with locking before sharing this with others.
-- No cluster autoscaler or AWS Load Balancer Controller is installed; services are reached through `kubectl port-forward`.
+- No AWS Load Balancer Controller is installed; services are reached through `kubectl port-forward`.
 - The node role has no CloudWatch Logs permission, so the optional Fluent Bit log forwarding needs one attached by hand.
 - ECR tags are mutable.
 

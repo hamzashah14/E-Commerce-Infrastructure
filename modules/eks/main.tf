@@ -105,8 +105,16 @@ resource "aws_eks_node_group" "node_group" {
     max_unavailable = 1
   }
 
+  # Cluster Autoscaler changes the desired size at runtime; do not reset it on apply.
+  lifecycle {
+    ignore_changes = [scaling_config[0].desired_size]
+  }
+
+  # Cluster Autoscaler discovers the ASG behind this node group through these tags.
   tags = {
-    Terraform = "true"
+    Terraform                                       = "true"
+    "k8s.io/cluster-autoscaler/enabled"             = "true"
+    "k8s.io/cluster-autoscaler/${var.cluster_name}" = "owned"
   }
 
 
@@ -154,5 +162,17 @@ resource "aws_eks_addon" "ebs_csi" {
 
   depends_on = [
     aws_iam_role_policy_attachment.ebs_csi_irsa_policy
+  ]
+}
+
+# metrics-server: the CPU/memory metrics that HorizontalPodAutoscalers read.
+# Needs worker nodes to schedule on, hence the node group dependency.
+
+resource "aws_eks_addon" "metrics_server" {
+  cluster_name = aws_eks_cluster.eks.name
+  addon_name   = "metrics-server"
+
+  depends_on = [
+    aws_eks_node_group.node_group
   ]
 }
