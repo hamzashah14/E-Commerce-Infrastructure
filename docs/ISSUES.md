@@ -29,3 +29,22 @@ If a node is still full, raise `max_size` and `desired_size` in `terraform.tfvar
 - **Symptom:** the PostgreSQL pod waits for its volume; events show a permission error from the EBS CSI driver.
 - **Cause:** the EBS CSI driver needs its own IAM permissions. Policies on the node role are not enough on EKS, and the driver must receive them through an IAM role for its service account (IRSA).
 - **Fix:** `modules/eks` creates the cluster's OIDC provider, an IAM role trusted by `system:serviceaccount:kube-system:ebs-csi-controller-sa` with `AmazonEBSCSIDriverPolicy`, and installs the `aws-ebs-csi-driver` add-on with that role.
+
+## Autoscaling
+
+### HorizontalPodAutoscaler shows `<unknown>` targets
+
+- **Symptom:** `kubectl get hpa -n ecommerce` shows `<unknown>/70%`, and the replica count never changes.
+- **Cause:** the HPA reads CPU from the metrics API, which needs the `metrics-server` add-on, and the target Deployment must set `resources.requests.cpu`. Utilisation is a percentage of the request, so without a request there is nothing to divide by.
+- **Fix:** `kubectl get apiservice v1beta1.metrics.k8s.io` should be `Available`, and `kubectl top nodes` should return numbers. Add CPU requests to the Deployments.
+
+### Pods stay `Pending` and no node is added
+
+- **Symptom:** new pods are `Pending` with `0/N nodes are available`, but the node group does not grow.
+- **Cause:** the node group is already at `max_size`, or the autoscaler cannot find or scale it. It discovers the Auto Scaling group through the `k8s.io/cluster-autoscaler/enabled` and `k8s.io/cluster-autoscaler/<cluster_name>` tags, and its IAM role only allows scaling groups tagged `owned`.
+- **Fix:** check `kubectl logs -n kube-system deploy/cluster-autoscaler-aws-cluster-autoscaler` for permission or discovery errors, and raise `max_size` in `terraform.tfvars` if the group is at its ceiling.
+
+### `terraform apply` wants to change `desired_size`
+
+- **Cause:** Cluster Autoscaler changes the node group's desired size at runtime, so it no longer matches `terraform.tfvars`.
+- **Fix:** none needed. `desired_size` is in `ignore_changes`, so Terraform leaves it alone after the first apply. Change `min_size` and `max_size` instead.
